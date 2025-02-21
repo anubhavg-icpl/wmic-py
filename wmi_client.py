@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-# Enhanced WMI Client Tool
-# A secure and robust WMI client for querying Windows systems remotely
-# Supports authentication, secure connections, and formatted output
+# Python WMI Client
+# A direct replacement for the wmic command-line tool
 #
 
 import argparse
@@ -10,10 +9,7 @@ import sys
 import os
 import configparser
 import io
-import logging
 import socket
-import textwrap
-from datetime import datetime
 
 try:
     from natsort import natsorted, ns
@@ -25,38 +21,21 @@ except ImportError:
     print("Please install required packages with: pip3 install impacket natsort configparser")
     sys.exit(1)
 
-VERSION = '2.0.1'
-
-class Color:
-    """ANSI color codes for terminal output"""
-    PURPLE = '\033[95m'
-    BLUE = '\033[94m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+VERSION = '2.0.2'
 
 class WmiClient:
-    """Enhanced WMI Client for remote Windows system queries"""
+    """WMI Client that mimics original wmic behavior"""
 
-    def __init__(self, auth, host, debug=False):
+    def __init__(self, auth, host):
         """
         Initialize the WMI client
         
         Args:
             auth (dict): Authentication information (username, password, domain)
             host (str): Target host address
-            debug (bool): Enable debug logging
         """
         self.auth = auth
         self.host = host
-        self.debug = debug
-        
-        if debug:
-            logging.basicConfig(level=logging.DEBUG, 
-                               format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     def get_language(self, lang):
         """
@@ -68,17 +47,9 @@ class WmiClient:
         Returns:
             str: Language identifier
         """
-        languages = {
-            552: 'en-US',
-            1033: 'en-US',
-            1031: 'de-DE',
-            1036: 'fr-FR',
-            1034: 'es-ES',
-            1041: 'ja-JP',
-            2052: 'zh-CN',
-            1049: 'ru-RU'
-        }
-        return languages.get(lang, f'unknown-{lang}')
+        if lang == 552:
+            return 'en-US'
+        return '??-??'
 
     def format_value(self, value, cimtype, type_code):
         """
@@ -98,39 +69,23 @@ class WmiClient:
             return '(null)'
             
         if cimtype == 'string':
-            return str(value).strip()
+            if value == 0:
+                return '(null)'
+            else:
+                return str(value).strip()
         elif cimtype == 'boolean':
             return 'True' if value else 'False'
-        elif cimtype == 'datetime':
-            # Format WMI datetime properly
-            try:
-                # Handle WMI datetime format
-                if isinstance(value, str) and value.startswith('20'):
-                    year = int(value[0:4])
-                    month = int(value[4:6])
-                    day = int(value[6:8])
-                    hour = int(value[8:10])
-                    minute = int(value[10:12])
-                    second = int(value[12:14])
-                    return f"{year:04d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}:{second:02d}"
-            except (ValueError, IndexError):
-                pass
-            return str(value).strip()
         else:
             return str(value).strip()
 
-    def print_results(self, query_object, delimiter, output_format='default'):
+    def print_results(self, query_object, delimiter):
         """
-        Print query results in the specified format
+        Print query results like the original wmic
         
         Args:
             query_object: WMI query results
             delimiter (str): Delimiter for output
-            output_format (str): Output format (default, json, csv)
         """
-        results = []
-        headers = []
-        
         try:
             while True:
                 try:
@@ -143,8 +98,7 @@ class WmiClient:
                         
                     class_object = next_result[0]
                     
-                    if output_format == 'default':
-                        print(f"{Color.BLUE}CLASS: {class_object.getClassName()}{Color.ENDC}")
+                    print(f'CLASS: {class_object.getClassName()}')
                     
                     record = class_object.getProperties()
                     keys = []
@@ -152,22 +106,15 @@ class WmiClient:
                         keys.append(name.strip())
                     keys = natsorted(keys, alg=ns.IGNORECASE)
                     
-                    # Store or print headers
-                    if not headers:
-                        headers = keys
-                        if output_format == 'default':
-                            print(f"{Color.GREEN}{delimiter.join(keys)}{Color.ENDC}")
-                        elif output_format == 'csv' and not results:
-                            print(delimiter.join(keys))
+                    # Print headers
+                    print(delimiter.join(keys))
                     
                     # Process values
-                    row = {}
                     tmp = []
                     for key in keys:
                         # Guard against missing keys or malformed records
                         if key not in record:
                             tmp.append("(null)")
-                            row[key] = "(null)"
                             continue
                             
                         # Safe handling of qualifiers
@@ -197,45 +144,19 @@ class WmiClient:
                             )
                         
                         tmp.append(formatted_value)
-                        row[key] = formatted_value
                     
-                    results.append(row)
-                    
-                    if output_format == 'default':
-                        print(delimiter.join(tmp))
-                    elif output_format == 'csv':
-                        print(delimiter.join(tmp))
+                    # Print values
+                    print(delimiter.join(tmp))
                     
                 except Exception as e:
                     if hasattr(e, 'get_error_code') and e.get_error_code() != wmi.WBEMSTATUS.WBEM_S_FALSE:
-                        if self.debug:
-                            logging.error(f"Error processing result: {str(e)}")
-                        print(f"{Color.YELLOW}Warning: {str(e)}{Color.ENDC}")
+                        raise
                     else:
-                        if self.debug:
-                            logging.error(f"Unexpected error: {str(e)}")
-                        # Continue with next result instead of crashing
-                        continue
-                        
-            # JSON output (at the end)
-            if output_format == 'json' and results:
-                try:
-                    import json
-                    print(json.dumps(results, indent=2))
-                except Exception as e:
-                    if self.debug:
-                        logging.error(f"JSON formatting error: {str(e)}")
-                    print(f"{Color.RED}Error formatting JSON output: {str(e)}{Color.ENDC}")
-            
-            # Print success message with result count
-            if output_format == 'default' and results:
-                print("-" * 60)
-                print(f"{Color.GREEN}Query completed successfully. Retrieved {len(results)} record(s).{Color.ENDC}")
+                        break
                 
         except Exception as e:
-            if self.debug:
-                logging.error(f"Error in print_results: {str(e)}")
-            print(f"{Color.RED}Error processing results: {str(e)}{Color.ENDC}")
+            print(f"Error processing results: {str(e)}")
+            sys.exit(1)
 
     def query_and_print(self, wql, **kwargs):
         """
@@ -244,13 +165,9 @@ class WmiClient:
         Args:
             wql (str): WMI query
             **kwargs: Additional options
-            
-        Returns:
-            bool: Success status
         """
         namespace = kwargs.get('namespace', '//./root/cimv2')
         delimiter = kwargs.get('delimiter', '|')
-        output_format = kwargs.get('output_format', 'default')
         timeout = kwargs.get('timeout', 30)
         
         conn = None
@@ -261,11 +178,6 @@ class WmiClient:
         socket.setdefaulttimeout(timeout)
         
         try:
-            if self.debug:
-                logging.info(f"Connecting to {self.host}")
-                logging.info(f"Using namespace: {namespace}")
-                logging.info(f"Query: {wql}")
-            
             # Create DCOM connection
             conn = DCOMConnection(
                 self.host, 
@@ -289,17 +201,11 @@ class WmiClient:
                 wmi.WBEM_FLAG_RETURN_IMMEDIATELY | wmi.WBEM_FLAG_ENSURE_LOCATABLE
             )
             
-            self.print_results(query_object, delimiter, output_format)
+            self.print_results(query_object, delimiter)
             query_object.RemRelease()
 
             wmi_service.RemRelease()
             conn.disconnect()
-            
-            # Ensure we properly exit after completion
-            if kwargs.get('auto_exit', False):
-                sys.exit(0)
-                
-            return True
             
         except Exception as e:
             # Clean up resources
@@ -314,19 +220,15 @@ class WmiClient:
                 
             error_message = str(e)
             if "rpc_s_access_denied" in error_message:
-                print(f"{Color.RED}Access denied. Please check your credentials and ensure WMI is properly configured on the target.{Color.ENDC}")
-                print(f"{Color.YELLOW}Troubleshooting tip: Verify that the Remote Procedure Call (RPC) service is running on the target.{Color.ENDC}")
+                print("Access denied. Please check your credentials and ensure WMI is properly configured on the target.")
             elif "STATUS_LOGON_FAILURE" in error_message:
-                print(f"{Color.RED}Authentication failure. Please check username and password.{Color.ENDC}")
+                print("Authentication failure. Please check username and password.")
             elif "timed out" in error_message.lower():
-                print(f"{Color.RED}Connection timed out. The host may be unreachable or blocking WMI traffic.{Color.ENDC}")
+                print("Connection timed out. The host may be unreachable or blocking WMI traffic.")
             else:
-                print(f"{Color.RED}Error connecting to {self.host}: {error_message}{Color.ENDC}")
+                print(f"Error connecting to {self.host}: {error_message}")
                 
-            if self.debug:
-                logging.error(f"Connection error: {error_message}")
-                
-            return False
+            sys.exit(1)
 
 def validate_host(host):
     """Validate and format host address"""
@@ -337,7 +239,7 @@ def validate_host(host):
 def load_auth_from_file(file_path):
     """Load authentication from config file"""
     if not os.path.exists(file_path):
-        print(f"{Color.RED}Error: Authentication file not found: {file_path}{Color.ENDC}")
+        print(f"Error: Authentication file not found: {file_path}")
         sys.exit(1)
         
     try:
@@ -352,19 +254,19 @@ def load_auth_from_file(file_path):
         }
         return auth
     except Exception as e:
-        print(f"{Color.RED}Error parsing authentication file: {str(e)}{Color.ENDC}")
+        print(f"Error parsing authentication file: {str(e)}")
         sys.exit(1)
 
 def parse_auth_string(auth_string):
     """Parse authentication string to extract domain, username, and password"""
     match = re.compile('(?:(?:([^/\\\\%]*)[/\\\\])?([^%]*))(?:%(.*))?').match(auth_string)
     if not match:
-        print(f"{Color.RED}Invalid authentication format. Use: [DOMAIN\\]USERNAME[%PASSWORD]{Color.ENDC}")
+        print("Invalid authentication format. Use: [DOMAIN\\]USERNAME[%PASSWORD]")
         sys.exit(1)
         
     domain, username, password = match.groups('')
     if not username:
-        print(f"{Color.RED}Missing username in authentication string{Color.ENDC}")
+        print("Missing username in authentication string")
         sys.exit(1)
         
     return {
@@ -373,62 +275,21 @@ def parse_auth_string(auth_string):
         'password': password
     }
 
-def show_examples():
-    """Display usage examples"""
-    examples = """
-Examples:
-    # Basic query with username/password
-    python3 wmi_client.py -U 'Administrator%Password' //192.168.1.27 "SELECT * FROM Win32_OperatingSystem"
-    
-    # Query with domain authentication
-    python3 wmi_client.py -U 'DOMAIN\\User%Password' //192.168.1.27 "SELECT * FROM Win32_Process"
-    
-    # Using authentication file
-    python3 wmi_client.py -A auth.txt //192.168.1.27 "SELECT * FROM Win32_Service"
-    
-    # JSON output format
-    python3 wmi_client.py -U 'Administrator%Password' //192.168.1.27 "SELECT * FROM Win32_LogicalDisk" --format json
-    
-    # CSV output with comma delimiter
-    python3 wmi_client.py -U 'Administrator%Password' //192.168.1.27 "SELECT * FROM Win32_ComputerSystem" --format csv --delimiter ','
-    
-    # Query with different namespace
-    python3 wmi_client.py -U 'Administrator%Password' //192.168.1.27 "SELECT * FROM Win32_Product" --namespace "//./root/cimv2"
-    """
-    print(examples)
-
 def main():
     parser = argparse.ArgumentParser(
-        description=f"Enhanced WMI Client v{VERSION}",
-        epilog="For more information and examples, use the --examples flag.",
+        description=f"Python WMI Client v{VERSION}",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument('-U', '--user', dest='user', help="[DOMAIN\\]USERNAME[%%PASSWORD]")
     parser.add_argument('-A', '--authentication-file', dest='authfile', help="Authentication file")
     parser.add_argument('--delimiter', default='|', help="Output delimiter, default: |")
     parser.add_argument('--namespace', default='//./root/cimv2', help='Namespace (default: //./root/cimv2)')
-    parser.add_argument('--format', choices=['default', 'json', 'csv'], default='default', help='Output format')
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     parser.add_argument('--timeout', type=int, default=30, help='Connection timeout in seconds')
-    parser.add_argument('--examples', action='store_true', help='Show usage examples')
     parser.add_argument('--version', '-v', action='version', version=f"WMI Client v{VERSION}")
-    parser.add_argument('host', metavar="//host", nargs='?', help='Target host address')
-    parser.add_argument('wql', metavar="query", nargs='?', help='WMI query')
+    parser.add_argument('host', metavar="//host", help='Target host address')
+    parser.add_argument('wql', metavar="query", help='WMI query')
     
     args = parser.parse_args()
-    
-    # Show examples if requested
-    if args.examples:
-        show_examples()
-        sys.exit(0)
-        
-    # Check required arguments
-    if not args.host or not args.wql:
-        if not args.examples:
-            parser.print_help()
-            print(f"\n{Color.RED}Error: Missing host and/or query parameters{Color.ENDC}")
-            print(f"{Color.YELLOW}Use --examples to see usage examples{Color.ENDC}")
-        sys.exit(1)
     
     # Get authentication credentials
     auth = None
@@ -437,71 +298,28 @@ def main():
     elif args.user:
         auth = parse_auth_string(args.user)
     else:
-        print(f"{Color.RED}Error: Missing authentication. Use -U or -A options.{Color.ENDC}")
+        print("Missing authentication. Use -U or -A options.")
         sys.exit(1)
     
     # Validate and format host
     host = validate_host(args.host)
-    
-    # Prepare nice output header
     host_str = host[2:]  # Remove // prefix
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Construct the command that was executed
-    command_parts = []
-    command_parts.append(f"python3 {os.path.basename(sys.argv[0])}")
-    
-    if args.user:
-        command_parts.append(f"-U '{args.user}'")
-    elif args.authfile:
-        command_parts.append(f"-A {args.authfile}")
-        
-    if args.delimiter != '|':
-        command_parts.append(f"--delimiter '{args.delimiter}'")
-        
-    if args.namespace != '//./root/cimv2':
-        command_parts.append(f"--namespace '{args.namespace}'")
-        
-    if args.format != 'default':
-        command_parts.append(f"--format {args.format}")
-        
-    if args.debug:
-        command_parts.append("--debug")
-        
-    if args.timeout != 30:
-        command_parts.append(f"--timeout {args.timeout}")
-        
-    command_parts.append(f"//{host_str}")
-    command_parts.append(f'"{args.wql}"')
-    
-    executed_command = " ".join(command_parts)
-    
-    print(f"{Color.BOLD}=== WMI Query: {current_time} ==={Color.ENDC}")
-    print(f"{Color.BOLD}Target: {host_str}{Color.ENDC}")
-    print(f"{Color.BOLD}Query: {args.wql}{Color.ENDC}")
-    print(f"{Color.YELLOW}Executed Command: {executed_command}{Color.ENDC}")
-    print("-" * 60)
     
     # Execute query
-    client = WmiClient(auth, host_str, args.debug)
-    success = client.query_and_print(
+    client = WmiClient(auth, host_str)
+    client.query_and_print(
         args.wql,
         namespace=args.namespace,
         delimiter=args.delimiter,
-        output_format=args.format,
-        timeout=args.timeout,
-        auto_exit=not args.debug  # Auto-exit in normal mode, but not in debug mode
+        timeout=args.timeout
     )
-    
-    # Show status code on exit (will only reach here in debug mode or on failure)
-    sys.exit(0 if success else 1)
 
 if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        print(f"\n{Color.YELLOW}Operation canceled by user{Color.ENDC}")
+        print("\nOperation canceled by user")
         sys.exit(130)
     except Exception as e:
-        print(f"\n{Color.RED}Unexpected error: {str(e)}{Color.ENDC}")
+        print(f"\nUnexpected error: {str(e)}")
         sys.exit(1)
