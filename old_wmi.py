@@ -56,9 +56,8 @@ class WmiClient(object):
 
     def __init__(self, auth, host):
         """
-
-        :param auth:
-        :param host:
+        :param auth: Dictionary with keys 'username', 'password', 'domain'
+        :param host: Hostname or IP of the target
         """
         self.auth = auth
         self.host = host
@@ -68,7 +67,7 @@ class WmiClient(object):
         Retrieve the language passed in from int to string
 
         :param lang: string
-        :return:
+        :return: language string
         """
         if lang == 552:
             return 'en-US'
@@ -81,7 +80,7 @@ class WmiClient(object):
         :param value:
         :param cimtype: string
         :param type: int
-        :return:
+        :return: formatted string
         """
         if cimtype == 'string':
             if value == 0:
@@ -104,10 +103,8 @@ class WmiClient(object):
         Prints the results in the classObject as wmic.c would
 
         :param queryObject: IEnumWbemClassObject
-        :param delimiter: string
-        :return:
+        :param delimiter: string delimiter for output columns
         """
-
         while True:
             try:
                 classObject = queryObject.Next(0xffffffff, 1)[0]
@@ -133,8 +130,9 @@ class WmiClient(object):
                                 self.format_value(v, record[key]['qualifiers']['CIMTYPE'], record[key]['type']))
                         tmp.append('(%s)' % ','.join(values))
                     else:
-                        tmp.append('%s' % self.format_value(record[key]['value'], record[key]['qualifiers']['CIMTYPE'],
-                                                            record[key]['type']))
+                        tmp.append('%s' % self.format_value(record[key]['value'],
+                                                              record[key]['qualifiers']['CIMTYPE'],
+                                                              record[key]['type']))
                 print(delimiter.join(tmp))
             except Exception as e:
                 if e.get_error_code() != wmi.WBEMSTATUS.WBEM_S_FALSE:
@@ -144,11 +142,10 @@ class WmiClient(object):
 
     def query_and_print(self, wql, **kwargs):
         """
-        Querys and prints the results
+        Executes the WMI query and prints the results.
 
-        :param wql:
-        :param kwargs:
-        :return:
+        :param wql: WMI Query string
+        :param kwargs: Optional parameters, e.g., namespace and delimiter
         """
         namespace = '//./root/cimv2'
         delimiter = '|'
@@ -186,12 +183,13 @@ class WmiClient(object):
                 wmiService.RemRelease()
             if conn is not None:
                 conn.disconnect()
-            raise Exception("Could not connect to %s: %s" % (self.host, e.message))
+            raise Exception("Could not connect to %s: %s" % (self.host, str(e)))
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="WMI Client")
-    parser.add_argument('-U', '--user', dest='user', help="[DOMAIN\]USERNAME[%%PASSWORD]")
+    # Fixed help string using a raw string literal to prevent invalid escape sequences
+    parser.add_argument('-U', '--user', dest='user', help=r"[DOMAIN\]USERNAME[%%PASSWORD]")
     parser.add_argument('-A', '--authentication-file', dest='authfile', help="Authentication file")
     parser.add_argument('--delimiter', default='|', help="delimiter, default: |")
     parser.add_argument('--namespace', default='//./root/cimv2', help='namespace name (default //./root/cimv2)')
@@ -208,14 +206,14 @@ if __name__ == '__main__':
     }
     if options.authfile is not None:
         authfile = '[root]\n' + open(options.authfile, 'r').read()
-        config = configparser.SafeConfigParser()
-        config.readfp(io.StringIO(authfile))
+        config = configparser.ConfigParser()
+        config.read_file(io.StringIO(authfile))
         auth['domain'] = config.get('root', 'domain')
         auth['username'] = config.get('root', 'username')
         auth['password'] = config.get('root', 'password')
     elif options.user is not None:
-        auth['domain'], auth['username'], auth['password'] = re.compile(
-            '(?:(?:([^/\\\\%]*)[/\\\\])?([^%]*))(?:%(.*))?').match(options.user).groups('')
+        m = re.compile(r'(?:(?:([^/\\%]*)[/\\])?([^%]*))(?:%(.*))?').match(options.user)
+        auth['domain'], auth['username'], auth['password'] = m.groups('')
     else:
         print("Missing user information")
         sys.exit(1)
@@ -223,5 +221,6 @@ if __name__ == '__main__':
     if auth['domain'] == '':
         auth['domain'] = 'WORKGROUP'
 
+    # options.host is expected to start with "//", so we remove the first two characters
     WmiClient(auth, options.host[2:]).query_and_print(options.wql, namespace=options.namespace,
                                                       delimiter=options.delimiter)
