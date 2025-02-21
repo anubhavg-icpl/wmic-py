@@ -226,6 +226,11 @@ class WmiClient:
                     if self.debug:
                         logging.error(f"JSON formatting error: {str(e)}")
                     print(f"{Color.RED}Error formatting JSON output: {str(e)}{Color.ENDC}")
+            
+            # Print success message with result count
+            if output_format == 'default' and results:
+                print("-" * 60)
+                print(f"{Color.GREEN}Query completed successfully. Retrieved {len(results)} record(s).{Color.ENDC}")
                 
         except Exception as e:
             if self.debug:
@@ -275,7 +280,7 @@ class WmiClient:
             # Create WMI interface
             wmi_interface = conn.CoCreateInstanceEx(wmi.CLSID_WbemLevel1Login, wmi.IID_IWbemLevel1Login)
             wmi_login = wmi.IWbemLevel1Login(wmi_interface)
-            wmi_service = wmiLogin.NTLMLogin(namespace, NULL, NULL)
+            wmi_service = wmi_login.NTLMLogin(namespace, NULL, NULL)
             wmi_login.RemRelease()
 
             # Execute query and process results
@@ -289,6 +294,11 @@ class WmiClient:
 
             wmi_service.RemRelease()
             conn.disconnect()
+            
+            # Ensure we properly exit after completion
+            if kwargs.get('auto_exit', False):
+                sys.exit(0)
+                
             return True
             
         except Exception as e:
@@ -436,9 +446,40 @@ def main():
     # Prepare nice output header
     host_str = host[2:]  # Remove // prefix
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Construct the command that was executed
+    command_parts = []
+    command_parts.append(f"python3 {os.path.basename(sys.argv[0])}")
+    
+    if args.user:
+        command_parts.append(f"-U '{args.user}'")
+    elif args.authfile:
+        command_parts.append(f"-A {args.authfile}")
+        
+    if args.delimiter != '|':
+        command_parts.append(f"--delimiter '{args.delimiter}'")
+        
+    if args.namespace != '//./root/cimv2':
+        command_parts.append(f"--namespace '{args.namespace}'")
+        
+    if args.format != 'default':
+        command_parts.append(f"--format {args.format}")
+        
+    if args.debug:
+        command_parts.append("--debug")
+        
+    if args.timeout != 30:
+        command_parts.append(f"--timeout {args.timeout}")
+        
+    command_parts.append(f"//{host_str}")
+    command_parts.append(f'"{args.wql}"')
+    
+    executed_command = " ".join(command_parts)
+    
     print(f"{Color.BOLD}=== WMI Query: {current_time} ==={Color.ENDC}")
     print(f"{Color.BOLD}Target: {host_str}{Color.ENDC}")
     print(f"{Color.BOLD}Query: {args.wql}{Color.ENDC}")
+    print(f"{Color.YELLOW}Executed Command: {executed_command}{Color.ENDC}")
     print("-" * 60)
     
     # Execute query
@@ -448,10 +489,11 @@ def main():
         namespace=args.namespace,
         delimiter=args.delimiter,
         output_format=args.format,
-        timeout=args.timeout
+        timeout=args.timeout,
+        auto_exit=not args.debug  # Auto-exit in normal mode, but not in debug mode
     )
     
-    # Show status code on exit
+    # Show status code on exit (will only reach here in debug mode or on failure)
     sys.exit(0 if success else 1)
 
 if __name__ == '__main__':
